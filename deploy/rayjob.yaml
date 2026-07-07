@@ -1,0 +1,94 @@
+# RayJob: run one pMHC design campaign on Kubernetes via KubeRay.
+#
+# It provisions an ephemeral Ray cluster (CPU head + autoscaling GPU worker
+# group), runs the agent driver, then tears the cluster down. The agent's
+# control loop + brain run on the head; the heavy fold/specificity/sequence
+# tasks fan out to the GPU workers.
+#
+# Prerequisites on the cluster:
+#   * KubeRay operator installed        (helm install kuberay-operator ...)
+#   * NVIDIA GPU Operator / device plugin (so pods can request nvidia.com/gpu)
+#   * GPU node pool (may be tainted nvidia.com/gpu=present:NoSchedule)
+#   * The image below pushed to a registry your cluster can pull
+#
+# Submit:   kubectl apply -f deploy/rayjob.yaml
+# Watch:    kubectl get rayjob pmhc-campaign -w
+# Logs:     kubectl logs -l job-name=pmhc-campaign -f
+#
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: pmhc-campaign
+spec:
+  entrypoint: python examples/run_on_ray.py
+  shutdownAfterJobFinishes: true      # delete the cluster when the job ends
+  ttlSecondsAfterFinished: 600
+
+  # Campaign parameters passed to the driver as env vars.
+  runtimeEnvYAML: |
+    env_vars:
+      PMHC_PEPTIDE: "AAGIGILTV"
+      PMHC_ALLELE: "HLA-A*02:01"
+      PMHC_ANTIGEN: "MART-1"
+      PMHC_LIBRARY: "48"
+      PMHC_STAGE_GPUS: "1"     # full GPU for AF stages; ProteinMPNN packs at 0.25
+      PMHC_BRAIN: "rules"      # or "llm" (also set ANTHROPIC_API_KEY below)
+
+  rayClusterSpec:
+    rayVersion: "2.56.0"
+    enableInTreeAutoscaling: true      # scale the GPU pool up on demand...
+
+    # ---------------- head (CPU only: runs the orchestrator + brain) --------
+    headGroupSpec:
+      rayStartParams:
+        num-gpus: "0"                  # never schedule GPU tasks on the head
+      template:
+        spec:
+          containers:
+            - name: ray-head
+              image: REGISTRY/pmhc-agent:latest   # <-- set your image
+              resources:
+                requests: { cpu: "2", memory: 4Gi }
+                limits:   { cpu: "2", memory: 4Gi }
+              # For the LLM brain, mount the key from a Secret:
+              # env:
+              #   - name: ANTHROPIC_API_KEY
+              #     valueFrom:
+              #       secretKeyRef: { name: anthropic, key: api-key }
+
+    # ---------------- GPU workers (run RFdiffusion / AF / MPNN tasks) --------
+    workerGroupSpecs:
+      - groupName: gpu-workers
+        replicas: 0                    # ...starting from zero (scale-to-zero)
+        minReplicas: 0                 # idle cluster costs no GPU
+        maxReplicas: 10                # cap the fan-out / the bill
+        rayStartParams: {}
+        template:
+          spec:
+            # Land only on GPU nodes, and tolerate the GPU taint.
+            nodeSelector:
+              # e.g. GKE: cloud.google.com/gke-accelerator: nvidia-tesla-a100
+              # e.g. EKS: nvidia.com/gpu.product: A100-SXM4-40GB
+              {}
+            tolerations:
+              - key: nvidia.com/gpu
+                operator: Exists
+                effect: NoSchedule
+              # Uncomment to also allow spot/preemptible GPU nodes (cheaper;
+              # tasks retry if a node is reclaimed):
+              # - key: cloud.google.com/gke-spot
+              #   operator: Exists
+              #   effect: NoSchedule
+            containers:
+              - name: ray-worker
+                image: REGISTRY/pmhc-agent:latest   # <-- set your image
+                resources:
+                  requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: 1 }
+                  limits:   { cpu: "4", memory: 24Gi, nvidia.com/gpu: 1 }
+                # Mount model weights (AF2/RFdiffusion) from a PVC instead of
+                # baking them into the image:
+                # volumeMounts:
+                #   - { name: weights, mountPath: /weights, readOnly: true }
+            # volumes:
+            #   - name: weights
+            #     persistentVolumeClaim: { claimName: model-weights }

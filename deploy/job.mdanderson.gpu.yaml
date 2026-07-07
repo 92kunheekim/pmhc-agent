@@ -1,0 +1,99 @@
+---
+# pMHC-Design Agent as a PLAIN Kubernetes Job, adapted to the MD Anderson
+# yn-gpu-workload cluster template you provided.
+#
+# Why a plain Job (not the RayJob in rayjob.yaml): your institution template is
+# a batch/v1 Job with a single GPU and no Ray operator. So here the whole agent
+# runs in ONE pod with the in-process LocalExecutor — the control loop, the
+# gates, the brain, and the tools all on that pod's GPU. (Multi-pod Ray fan-out
+# would need the KubeRay operator installed cluster-wide — confirm with your
+# admins; see notes at the bottom. Within a single multi-GPU pod you can still
+# use RayExecutor(address=None) to parallelize across that pod's GPUs.)
+#
+# Preserved verbatim from your template: namespace, k8s-user label,
+# securityContext uid/gid, nodeSelector, /dev/shm, the home PVC, the AlphaFold
+# 2.3.1 DB mount, and the single-GPU limit. Changed: the image and the command.
+#
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kkim14-pmhc-agent
+  namespace: yn-gpu-workload
+  labels:
+    k8s-user: kkim14
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      nodeSelector:
+        "nvidia.com/gpu.present": "true"
+      securityContext:
+        runAsUser: 270143
+        runAsGroup: 600138
+        fsGroup: 600138
+      containers:
+        - name: main
+          # Build this FROM your tcrmodel2 image (it already has AF2 + CUDA
+          # 12.2), then add RFdiffusion + ProteinMPNN + the pmhc_agent package.
+          # See deploy/Dockerfile.mdanderson. Push to your Harbor project:
+          image: hpcharbor.mdanderson.edu/kkim14/pmhc-agent:latest
+          command: ["/bin/bash"]
+          # First run: the MOCK smoke test — proves the pod, package, and GPU
+          # scheduling work end to end (no model weights needed). Swap for the
+          # real driver once the real backends are wired (see comment below).
+          args:
+            - "-c"
+            - |
+              set -euo pipefail
+              cd "$HOME/pmhc_agent_pkg"
+              pip install --user -e . >/dev/null
+              python -m pmhc_agent.run --quiet
+              # REAL run (once RFdiffusion/ProteinMPNN/AF2 are in the image and
+              # a real target PDB is staged): use a driver that builds the
+              # registry with the real backends, e.g.
+              #   python examples/run_real_campaign.py
+          workingDir: "/rsrch3/home/genomic_med/kkim14"
+          env:
+            - name: HOME
+              value: "/rsrch3/home/genomic_med/kkim14"
+            - name: SCRATCH
+              value: "/rsrch3/scratch/genomic_med/kkim14"
+            - name: DATA
+              value: "/rsrch3/scratch/genomic_med/kkim14/data"
+            - name: AF_DB
+              value: "/rsrch3/scratch/reflib/REFLIB_data/alphafold-2.3.1"
+            # For the LLM brain: mount ANTHROPIC_API_KEY from a Secret instead
+            # of hardcoding it (see notes).
+          volumeMounts:
+            - name: shm
+              mountPath: "/dev/shm"
+            - name: home
+              mountPath: "/rsrch3/home/genomic_med/kkim14"
+            - name: data
+              mountPath: "/rsrch3/scratch/genomic_med/kkim14/data"
+            - name: alphafold_db
+              mountPath: "/rsrch3/scratch/reflib/REFLIB_data/alphafold-2.3.1"
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+          imagePullPolicy: IfNotPresent
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: '21474836480'   # 20Gi — AF needs a large /dev/shm
+        - name: home
+          persistentVolumeClaim:
+            claimName: kkim14-gpu-home
+        # NOTE: your template referenced `data` and `alphafold_db` mounts but
+        # only defined the `home` and `shm` volumes — your cluster may inject
+        # the rest via an admission webhook. If not, define them here with the
+        # PVC/hostPath names your admins provide, e.g.:
+        - name: data
+          persistentVolumeClaim:
+            claimName: kkim14-gpu-data        # <-- confirm the real claim name
+        - name: alphafold_db
+          persistentVolumeClaim:
+            claimName: reflib-alphafold-231   # <-- confirm the real claim name
+      restartPolicy: Never

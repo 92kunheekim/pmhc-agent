@@ -1,0 +1,124 @@
+---
+# Multi-pod Ray fan-out on the MD Anderson yn-gpu-workload cluster.
+#
+# PRECONDITION: the KubeRay operator must be installed and you must have RBAC to
+# create RayJob in this namespace. Check:
+#     kubectl get crd | grep ray.io
+# If that returns rayjobs.ray.io, this manifest is usable. If not, request
+# KubeRay from your admins (see deploy/README.md), or use a single multi-GPU
+# pod with job.mdanderson.gpu.yaml + RayExecutor(address=None).
+#
+# This provisions a CPU head (agent loop + brain) and an autoscaling GPU worker
+# group (RFdiffusion / AF2 / ProteinMPNN tasks), preserving your institution's
+# securityContext, nodeSelector, mounts, and Harbor image.
+#
+# STORAGE CAVEAT (important for multi-pod): head and worker pods land on
+# DIFFERENT nodes, so any PVC they share for passing structure files between
+# stages must be ReadWriteMany (RWX). A per-user home PVC is usually
+# ReadWriteOnce (RWO) and CANNOT be mounted by multiple pods across nodes at
+# once. The read-only AlphaFold DB is typically RWX (shared reflib) and is fine.
+# For inter-stage artifacts (RFdiffusion PDBs -> ProteinMPNN -> AF2), request an
+# RWX scratch PVC (or use object storage), and set RFdiffusionReal(out_dir=...)
+# to that mount. Confirm claim names + access modes with your admins.
+#
+# Submit:  kubectl apply -f deploy/rayjob.mdanderson.yaml
+# Watch:   kubectl -n yn-gpu-workload get rayjob kkim14-pmhc-ray -w
+# Logs:    kubectl -n yn-gpu-workload logs -l job-name=kkim14-pmhc-ray -f
+#
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: kkim14-pmhc-ray
+  namespace: yn-gpu-workload
+  labels:
+    k8s-user: kkim14
+spec:
+  entrypoint: python /opt/pmhc_agent_pkg/examples/run_on_ray.py
+  shutdownAfterJobFinishes: true
+  ttlSecondsAfterFinished: 600
+  runtimeEnvYAML: |
+    env_vars:
+      PMHC_PEPTIDE: "GILGFVFTL"
+      PMHC_ALLELE: "HLA-A*02:01"
+      PMHC_ANTIGEN: "Flu-M1"
+      PMHC_LIBRARY: "48"
+      PMHC_STAGE_GPUS: "1"
+      PMHC_BRAIN: "rules"
+      RAY_ADDRESS: "auto"
+
+  rayClusterSpec:
+    rayVersion: "2.56.0"
+    enableInTreeAutoscaling: true
+
+    # ---------------- head: CPU, runs the orchestrator + brain --------------
+    headGroupSpec:
+      rayStartParams:
+        num-gpus: "0"
+      template:
+        metadata:
+          labels: { k8s-user: kkim14 }
+        spec:
+          nodeSelector:
+            "nvidia.com/gpu.present": "true"
+          securityContext:
+            runAsUser: 270143
+            runAsGroup: 600138
+            fsGroup: 600138
+          containers:
+            - name: ray-head
+              image: hpcharbor.mdanderson.edu/kkim14/pmhc-agent:latest
+              resources:
+                requests: { cpu: "2", memory: 8Gi }
+                limits:   { cpu: "2", memory: 8Gi }
+              env:
+                - { name: HOME,  value: "/rsrch3/home/genomic_med/kkim14" }
+                - { name: AF_DB, value: "/rsrch3/scratch/reflib/REFLIB_data/alphafold-2.3.1" }
+              volumeMounts:
+                - { name: shm,          mountPath: "/dev/shm" }
+                - { name: home,         mountPath: "/rsrch3/home/genomic_med/kkim14" }
+                - { name: alphafold_db, mountPath: "/rsrch3/scratch/reflib/REFLIB_data/alphafold-2.3.1" }
+          volumes:
+            - name: shm
+              emptyDir: { medium: Memory, sizeLimit: '21474836480' }
+            - name: home
+              persistentVolumeClaim: { claimName: kkim14-gpu-home }
+            - name: alphafold_db
+              persistentVolumeClaim: { claimName: reflib-alphafold-231 }  # confirm name
+
+    # ---------------- GPU workers: run the heavy model tasks ----------------
+    workerGroupSpecs:
+      - groupName: gpu-workers
+        replicas: 0
+        minReplicas: 0          # idle => no GPU pods held
+        maxReplicas: 4          # <= your GPU quota; the hard fan-out ceiling
+        rayStartParams: {}
+        template:
+          metadata:
+            labels: { k8s-user: kkim14 }
+          spec:
+            nodeSelector:
+              "nvidia.com/gpu.present": "true"
+            securityContext:
+              runAsUser: 270143
+              runAsGroup: 600138
+              fsGroup: 600138
+            containers:
+              - name: ray-worker
+                image: hpcharbor.mdanderson.edu/kkim14/pmhc-agent:latest
+                resources:
+                  requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: 1 }
+                  limits:   { cpu: "4", memory: 24Gi, nvidia.com/gpu: 1 }
+                env:
+                  - { name: HOME,  value: "/rsrch3/home/genomic_med/kkim14" }
+                  - { name: AF_DB, value: "/rsrch3/scratch/reflib/REFLIB_data/alphafold-2.3.1" }
+                volumeMounts:
+                  - { name: shm,          mountPath: "/dev/shm" }
+                  - { name: home,         mountPath: "/rsrch3/home/genomic_med/kkim14" }
+                  - { name: alphafold_db, mountPath: "/rsrch3/scratch/reflib/REFLIB_data/alphafold-2.3.1" }
+            volumes:
+              - name: shm
+                emptyDir: { medium: Memory, sizeLimit: '21474836480' }
+              - name: home
+                persistentVolumeClaim: { claimName: kkim14-gpu-home }
+              - name: alphafold_db
+                persistentVolumeClaim: { claimName: reflib-alphafold-231 }  # confirm name

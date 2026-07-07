@@ -1,0 +1,35 @@
+# Image for the MD Anderson yn-gpu-workload cluster.
+#
+# Built FROM your existing tcrmodel2 image, which already ships AF2 + CUDA 12.2
+# (and TCRmodel2 is itself AF2-based pMHC/TCR modeling, so the AF stack is
+# present). We add RFdiffusion + ProteinMPNN + the pmhc_agent package on top.
+# The AlphaFold 2.3.1 databases are mounted at runtime (AF_DB), not baked in.
+#
+# Build & push to your Harbor project:
+#   docker build -f deploy/Dockerfile.mdanderson -t hpcharbor.mdanderson.edu/kkim14/pmhc-agent:latest .
+#   docker push hpcharbor.mdanderson.edu/kkim14/pmhc-agent:latest
+
+FROM hpcharbor.mdanderson.edu/kkim14/tcrmodel2:tcrmodel2_cuda12.2
+
+# --- the agent package (mock backends run immediately for a smoke test) ---
+WORKDIR /opt/pmhc_agent_pkg
+COPY pyproject.toml README.md /opt/pmhc_agent_pkg/
+COPY pmhc_agent /opt/pmhc_agent_pkg/pmhc_agent
+COPY examples /opt/pmhc_agent_pkg/examples
+RUN pip install --no-cache-dir -e .
+
+# --- real backends (uncomment/adjust as you add each) ---------------------
+# ProteinMPNN (lightweight):
+#   RUN git clone https://github.com/dauparas/ProteinMPNN /opt/ProteinMPNN
+# RFdiffusion (needs SE3-Transformer + its weights):
+#   RUN git clone https://github.com/RosettaCommons/RFdiffusion /opt/RFdiffusion \
+#    && cd /opt/RFdiffusion && pip install -e . \
+#    && bash scripts/download_models.sh /opt/RFdiffusion/models
+# AF2 initial guess (binder validation; reuses the tcrmodel2 AF2 install):
+#   RUN git clone https://github.com/nrbennett3/dl_binder_design /opt/dl_binder_design
+#
+# The agent reaches these via build_registry(backbones=RFdiffusionReal(...),
+# sequences=ProteinMPNNReal(...), folding=AF2InitialGuess(...)). Point the AF2
+# backend at the mounted DB via AF_DB in the Job env.
+
+CMD ["python", "-m", "pmhc_agent.run", "--quiet"]
