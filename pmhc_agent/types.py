@@ -82,6 +82,14 @@ class Design:
     specificity: Optional["SpecificityResult"] = None
     composite_score: float = 0.0
     liabilities: list[str] = field(default_factory=list)
+    # Engine generalization (additive, non-breaking):
+    #  * metrics: a named-metric bag any backend populates and any domain's
+    #    gates read by name (pmhc: pae_interaction/plddt/margin/phi; antibody:
+    #    iptm/self_consistency/ddg). Lets one gate runner serve every domain.
+    #  * chains: multi-chain designs (pmhc {"B": seq}; scFv {"H":.., "L":..}).
+    #    `sequence` remains the single-chain view for back-compat.
+    metrics: dict = field(default_factory=dict)
+    chains: dict = field(default_factory=dict)
 
 
 @dataclass

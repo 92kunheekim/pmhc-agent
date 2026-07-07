@@ -218,6 +218,28 @@ Three properties worth noting:
 loop: the system prompt, the tool schema, the call, the parse, the clamp, and
 the fallback.
 
+## Engine + domains (generalization)
+
+The orchestration is being generalized into a domain-agnostic **engine** so the
+same loop can drive pMHC-I binder design today and antibody design (RFantibody)
+next. The seam is a `DesignDomain` (in `interfaces.py`) that supplies the
+target intake, the negative set, the tool backends, the stage-tagged `Gate`
+list, ranking, and a self-description for the LLM brain. `Engine` (in
+`engine.py`) holds the domain-independent machinery and runs whatever domain it
+is given:
+
+```python
+from pmhc_agent import Engine, PMHCDomain, AgentConfig
+agent = Engine(domain=PMHCDomain(seed=7), config=AgentConfig())
+camp = agent.run(target)          # identical results to the legacy Orchestrator
+```
+
+`Design` now carries a named-metric bag (`metrics`) and a `chains` dict so gates
+never hardcode a score field and multi-chain (scFv VH+VL) designs fit where a
+single binder chain did. The legacy `Orchestrator` remains for back-compat;
+`test_engine_pmhc.py` proves `Engine(PMHCDomain)` is byte-identical to it. See
+`docs/ARCHITECTURE-generalization.md` for the full plan and the antibody path.
+
 ## Scaling out: Ray on Kubernetes (GPU fan-out)
 
 The agent's loop runs in one place; the thousands of per-design model calls
@@ -267,7 +289,10 @@ pmhc_agent/
   diagnostics.py    # failure taxonomy + Diagnoser interface + RuleBasedDiagnoser
   llm.py            # LLMDiagnoser: Anthropic-backed brain (optional)
   execution.py      # Executor interface: LocalExecutor + RayExecutor
-  orchestrator.py   # the agent control loop
+  interfaces.py     # DesignDomain + Gate + tool Protocols (engine seam)
+  engine.py         # Engine: domain-agnostic orchestrator
+  domains/pmhc/     # PMHCDomain: pMHC-I science as a DesignDomain
+  orchestrator.py   # legacy pMHC orchestrator (back-compat; == Engine+PMHCDomain)
   run.py            # CLI demo (--brain rules|llm)
 examples/multi_target.py
 examples/run_on_ray.py        # RayJob driver entrypoint
