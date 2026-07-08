@@ -261,8 +261,15 @@ The first real antibody backend is already written:
 epitope-focus fraction** from the geometry (paratope residues nearest an
 epitope hotspot vs off-epitope). Verified without a GPU
 (`tests/test_rfantibody_real.py`): the exact CLI and the HLT geometry against a
-known-coordinate fixture; only the diffusion needs a GPU. The RF2/AF3-ipTM and
-CDR-ProteinMPNN real backends follow the same template.
+known-coordinate fixture; only the diffusion needs a GPU.
+
+`ProteinMPNNCDRReal` (same file) wraps RFantibody's
+`proteinmpnn_interface_design.py` — it designs the CDR loops on the fixed
+framework of each HLT complex and threads them back into the structure that
+RF2/AF3 then predict. Verified (`tests/test_proteinmpnn_cdr_real.py`): the CLI
+and the extraction of the designed antibody-chain sequence from the output HLT
+PDB (three-letter → one-letter, multi-chain aware for scFv). Two of the three
+antibody backends are now real; RF2/AF3-ipTM is the remaining one, same template.
 
 ## Scaling out: Ray on Kubernetes (GPU fan-out)
 

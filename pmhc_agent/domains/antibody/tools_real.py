@@ -27,7 +27,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 
-from ...types import Backbone
+from ...types import Backbone, Design
 
 
 @dataclass
@@ -163,3 +163,126 @@ class RFantibodyReal:
                 peptide_contact_fraction=self.epitope_contact_fraction(pdb, hotspots),
                 coords_ref=pdb))
         return backbones
+
+
+# --------------------------------------------------------------------------
+# REAL CDR-ProteinMPNN backend (RFantibody interface design)
+# --------------------------------------------------------------------------
+import re as _re
+
+# three-letter -> one-letter for sequence extraction from designed PDBs
+_THREE_TO_ONE = {
+    "ALA": "A", "ARG": "R", "ASN": "N", "ASP": "D", "CYS": "C", "GLN": "Q",
+    "GLU": "E", "GLY": "G", "HIS": "H", "ILE": "I", "LEU": "L", "LYS": "K",
+    "MET": "M", "PHE": "F", "PRO": "P", "SER": "S", "THR": "T", "TRP": "W",
+    "TYR": "Y", "VAL": "V",
+}
+_MPNN_SCORE_RE = _re.compile(r"score=([-\d.eE]+)")
+
+
+@dataclass
+class ProteinMPNNCDRReal:
+    """REAL CDR sequence design for antibodies (RFantibody interface design).
+
+    Wraps RFantibody's `proteinmpnn_interface_design.py`, which designs the CDR
+    loops on the fixed framework of each RFdiffusion HLT complex and threads the
+    sequence back into the structure (the input RF2/AF3 then predict). Same
+    method the engine calls — `.design(backbone, n, round_index) -> list[Design]`.
+
+    VERIFIABILITY: build_command() and the designed-sequence extraction from the
+    output HLT PDB are unit-tested against a fixture; the model run is injectable
+    (`runner=`) and only it needs a GPU. ProteinMPNN emits no binding ddG (that
+    is a separate task) and for antibodies the primary filter is RF2/AF3 ipTM
+    (gate A4), so `mpnn_score` is parsed when a companion .fa is present and left
+    at the permissive default otherwise.
+    """
+    rfantibody_dir: str
+    binder_chains: tuple = ("H",)          # ("H",) VHH; ("H","L") scFv
+    seqs_per_struct: int | None = None      # None -> use n from design()
+    out_dir: str | None = None
+    python_exe: str = "python"
+    runner: object = None
+    name: str = "ProteinMPNN-CDR (real)"
+    is_mock: bool = field(default=False)
+
+    def build_command(self, pdbdir: str, outdir: str, seqs: int) -> list[str]:
+        """The real RFantibody interface-design CLI (designs the CDR loops)."""
+        return [
+            self.python_exe,
+            os.path.join(self.rfantibody_dir, "scripts",
+                         "proteinmpnn_interface_design.py"),
+            "-pdbdir", pdbdir,
+            "-outpdbdir", outdir,
+            "-seqs_per_struct", str(seqs),
+        ]
+
+    def chain_sequences(self, pdb_path: str) -> dict:
+        """Extract per-chain one-letter sequences (in residue order) for the
+        antibody chains from a designed HLT PDB."""
+        seen: dict = {}
+        with open(pdb_path) as fh:
+            for line in fh:
+                if not line.startswith(("ATOM", "HETATM")):
+                    continue
+                if line[12:16].strip() != "CA":
+                    continue
+                chain = line[21]
+                if chain not in self.binder_chains:
+                    continue
+                resseq = int(line[22:26])
+                aa = _THREE_TO_ONE.get(line[17:20].strip(), "X")
+                seen.setdefault(chain, []).append((resseq, aa))
+        chains = {}
+        for ch, residues in seen.items():
+            residues.sort()
+            chains[ch] = "".join(a for _, a in residues)
+        return chains
+
+    @staticmethod
+    def _score_from_fasta(fa_path: str) -> float | None:
+        if not os.path.exists(fa_path):
+            return None
+        with open(fa_path) as fh:
+            for line in fh:
+                if line.startswith(">") and "sample=" in line:
+                    m = _MPNN_SCORE_RE.search(line)
+                    if m:
+                        return float(m.group(1))
+        return None
+
+    def design(self, backbone: Backbone, n: int, round_index: int):
+        pdb = backbone.coords_ref
+        if not pdb or not os.path.exists(pdb):
+            raise FileNotFoundError(
+                f"ProteinMPNNCDRReal needs a real HLT PDB at backbone.coords_ref; "
+                f"got {pdb!r}. Pair it with real RFantibody backbones.")
+        seqs = self.seqs_per_struct or n
+        run = self.runner or __import__("subprocess").run
+        out_dir = self.out_dir or tempfile.mkdtemp(prefix="abmpnn_out_")
+        os.makedirs(out_dir, exist_ok=True)
+        import shutil as _sh
+        with tempfile.TemporaryDirectory(prefix="abmpnn_in_") as pdbdir:
+            stem = os.path.splitext(os.path.basename(pdb))[0]
+            _sh.copy(pdb, os.path.join(pdbdir, f"{stem}.pdb"))
+            argv = self.build_command(pdbdir, out_dir, seqs)
+            if self.runner is None:
+                run(argv, check=True)
+            else:
+                run(argv)
+            # RFantibody/dl_binder_design writes <stem>_dldesign_<i>.pdb
+            designed = sorted(
+                p for p in os.listdir(out_dir)
+                if p.startswith(stem) and p.endswith(".pdb"))
+
+        out = []
+        for i, fname in enumerate(designed):
+            dpdb = os.path.join(out_dir, fname)
+            chains = self.chain_sequences(dpdb)
+            seq = "".join(chains.get(c, "") for c in self.binder_chains)
+            score = self._score_from_fasta(os.path.splitext(dpdb)[0] + ".fa")
+            d = Design(id=f"{backbone.id}_s{i}", backbone=backbone,
+                       sequence=seq, mpnn_score=score if score is not None else 0.0,
+                       rosetta_ddg=None, struct_ref=dpdb)
+            d.chains = chains
+            out.append(d)
+        return out
