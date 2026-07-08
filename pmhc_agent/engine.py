@@ -58,9 +58,11 @@ class Engine:
             m["pae_interaction"] = d.fold.pae_interface
             m["plddt"] = d.fold.plddt
             m["ca_rmsd"] = d.fold.ca_rmsd_to_design
+            m.update(d.fold.extra)            # domain metrics (e.g. iptm)
         if d.specificity is not None:
             m["margin"] = d.specificity.margin
             m["phi"] = d.specificity.peptide_energy_fraction
+            m.update(d.specificity.extra)
 
     def _run_stage_gates(self, designs, stage, ctx, camp, report):
         for gate in self.domain.gates():

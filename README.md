@@ -238,7 +238,21 @@ camp = agent.run(target)          # identical results to the legacy Orchestrator
 never hardcode a score field and multi-chain (scFv VH+VL) designs fit where a
 single binder chain did. The legacy `Orchestrator` remains for back-compat;
 `test_engine_pmhc.py` proves `Engine(PMHCDomain)` is byte-identical to it. See
-`docs/ARCHITECTURE-generalization.md` for the full plan and the antibody path.
+`docs/ARCHITECTURE-generalization.md` for the full plan.
+
+**A second domain already runs on the engine.** `domains/antibody/` implements
+de novo antibody design (RFantibody) as an `AntibodyDomain` — RFdiffusion CDR
+loops, ProteinMPNN CDR design, RF2 self-consistency + AF3 **ipTM** filtering
+(ipTM ≥ 0.6 VHH / 0.85 scFv), cross-reactivity screening, and developability
+gates — all reading the same metric bag, driven by the same engine:
+
+```bash
+PYTHONPATH=. python examples/run_antibody_mock.py   # full mock antibody campaign
+```
+
+Only the domain differs from the pMHC run; the loop, executor, memory, brain,
+and Ray/K8s layer are shared. Real RFantibody/RF2-AF3 backends drop in behind
+the mock tool signatures the same fixture-verified way as the pMHC backends.
 
 ## Scaling out: Ray on Kubernetes (GPU fan-out)
 
@@ -292,6 +306,7 @@ pmhc_agent/
   interfaces.py     # DesignDomain + Gate + tool Protocols (engine seam)
   engine.py         # Engine: domain-agnostic orchestrator
   domains/pmhc/     # PMHCDomain: pMHC-I science as a DesignDomain
+  domains/antibody/ # AntibodyDomain: de novo antibody design (RFantibody)
   orchestrator.py   # legacy pMHC orchestrator (back-compat; == Engine+PMHCDomain)
   run.py            # CLI demo (--brain rules|llm)
 examples/multi_target.py

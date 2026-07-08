@@ -99,6 +99,9 @@ class FoldResult:
     plddt: float                       # higher is better
     ca_rmsd_to_design: float           # design vs prediction, lower is better
     predictors_agree: bool = True      # AF2 vs AF3/Chai consensus (gate G8)
+    # Domain-specific metrics merged into Design.metrics by the engine
+    # (e.g. antibody: iptm, self_consistency_rmsd). Empty for pMHC.
+    extra: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -109,6 +112,7 @@ class SpecificityResult:
     margin: float                              # worst-case on - off (min)
     peptide_energy_fraction: float             # phi: energy from peptide vs MHC
     mpnn_recovery_ok: bool                     # on-target recovered above all off
+    extra: dict = field(default_factory=dict)  # domain-specific metrics
 
     @property
     def worst_offender(self) -> Optional[str]:

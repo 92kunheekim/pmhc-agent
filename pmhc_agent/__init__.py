@@ -19,6 +19,8 @@ from .execution import (Executor, LocalExecutor, RayExecutor, make_executor)
 from .interfaces import DesignDomain, Gate
 from .engine import Engine
 from .domains.pmhc.domain import PMHCDomain
+from .domains.antibody.domain import AntibodyDomain
+from .domains.antibody.target import AntibodyTarget
 
 __version__ = "0.2.0"
 __all__ = [
@@ -30,4 +32,5 @@ __all__ = [
     "Executor", "LocalExecutor", "RayExecutor", "make_executor",
     # Engine generalization:
     "Engine", "DesignDomain", "Gate", "PMHCDomain",
+    "AntibodyDomain", "AntibodyTarget",
 ]
