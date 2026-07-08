@@ -254,6 +254,16 @@ Only the domain differs from the pMHC run; the loop, executor, memory, brain,
 and Ray/K8s layer are shared. Real RFantibody/RF2-AF3 backends drop in behind
 the mock tool signatures the same fixture-verified way as the pMHC backends.
 
+The first real antibody backend is already written:
+`domains/antibody/tools_real.py::RFantibodyReal` wraps RFantibody's
+`rfdiffusion_inference.py` (antibody mode) — framework + `ppi.hotspot_res` +
+`antibody.design_loops`, parsing HLT-format output PDBs and computing a **real
+epitope-focus fraction** from the geometry (paratope residues nearest an
+epitope hotspot vs off-epitope). Verified without a GPU
+(`tests/test_rfantibody_real.py`): the exact CLI and the HLT geometry against a
+known-coordinate fixture; only the diffusion needs a GPU. The RF2/AF3-ipTM and
+CDR-ProteinMPNN real backends follow the same template.
+
 ## Scaling out: Ray on Kubernetes (GPU fan-out)
 
 The agent's loop runs in one place; the thousands of per-design model calls
