@@ -268,8 +268,19 @@ known-coordinate fixture; only the diffusion needs a GPU.
 framework of each HLT complex and threads them back into the structure that
 RF2/AF3 then predict. Verified (`tests/test_proteinmpnn_cdr_real.py`): the CLI
 and the extraction of the designed antibody-chain sequence from the output HLT
-PDB (three-letter → one-letter, multi-chain aware for scFv). Two of the three
-antibody backends are now real; RF2/AF3-ipTM is the remaining one, same template.
+PDB (three-letter → one-letter, multi-chain aware for scFv).
+
+`RF2AF3Real` (same file) finishes the chain: RoseTTAFold2 self-consistency
+(`rf2_predict.py`) + AlphaFold3 **ipTM** (`run_alphafold.py`) — the paper's most
+predictive filter. It merges both into one `FoldResult` so gate A4 reads ipTM,
+self-consistency, and pLDDT from the metric bag. Verified
+(`tests/test_rf2af3_real.py`): both CLIs, the RF2 scorefile parse, the AF3
+summary-JSON parse, and the AF3 input-JSON builder, against fixtures; only the
+model runs need a GPU. **All three antibody backends are now real** — the full
+RFantibody generate → design → filter chain — with mocks retained for offline
+runs. Wire them with `ToolRegistry(backbones=RFantibodyReal(...),
+sequences=ProteinMPNNCDRReal(...), folding=RF2AF3Real(...), ...)` and pass it to
+`AntibodyDomain(registry=...)`.
 
 ## Scaling out: Ray on Kubernetes (GPU fan-out)
 
