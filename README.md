@@ -4,6 +4,16 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 
+**▶ Live demo:** [`/docs`](https://kunheekim--pmhc-agent-demo-fastapi-app.modal.run/docs) — a public, scale-to-zero FastAPI endpoint on Modal. POST a target and watch the agent run:
+
+```bash
+curl -X POST https://kunheekim--pmhc-agent-demo-fastapi-app.modal.run/campaign \
+  -H 'content-type: application/json' \
+  -d '{"peptide":"AAGIGILTV","allele":"HLA-A*02:01","antigen":"MART-1"}'
+```
+
+It returns the per-round gate funnel and a ranked shortlist (mock backends, no GPU; in-silico hypotheses, human-gated).
+
 Runnable Python scaffolding for an AI agent that autonomously designs
 **high-specificity binders to peptide–MHC-I complexes** — an implementation
 skeleton of the pipeline in Lam, Motmaen et al., *Design of high-specificity
