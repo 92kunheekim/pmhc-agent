@@ -9,7 +9,7 @@ description = "Autonomous AI agent for designing high-specificity binders to pep
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "prepared for KH" }]
+authors = [{ name = "Kun Hee Kim", email = "92kunheekim@users.noreply.github.com" }]
 keywords = ["protein-design", "immunotherapy", "pMHC", "RFdiffusion", "agent"]
 dependencies = []   # runs on the standard library alone (mock backends)
 
