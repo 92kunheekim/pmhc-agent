@@ -1,5 +1,9 @@
 # pMHC-Design Agent
 
+[![CI](https://github.com/92kunheekim/pmhc-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/92kunheekim/pmhc-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+
 Runnable Python scaffolding for an AI agent that autonomously designs
 **high-specificity binders to peptide–MHC-I complexes** — an implementation
 skeleton of the pipeline in Lam, Motmaen et al., *Design of high-specificity
@@ -18,15 +22,26 @@ orchestrator**.
 
 ---
 
+## What's original here (vs. the paper)
+
+Lam & Motmaen *et al.* contribute the **science** — the specificity-design method and its wet-lab validation. This repository is the **engineering** around that idea, and that engineering is the contribution:
+
+- **Agentic orchestration loop** — plan → gate → diagnose → adapt → re-design — turning a one-shot pipeline into a closed loop with a failure taxonomy and an adaptive specificity threshold (`theta`).
+- **Pluggable "brain"** — deterministic rules vs. an Anthropic-SDK LLM behind one `Diagnoser` interface, with tool-use structured output, guardrail clamping, and graceful fallback to rules when no key/SDK is present.
+- **Domain-agnostic `Engine`** — a `DesignDomain` seam so the same loop drives pMHC-I binder design today and de novo antibody design (RFantibody) unchanged.
+- **Scale-out layer** — `LocalExecutor`/`RayExecutor` behind one interface, a KubeRay RayJob with autoscale-to-zero GPU workers, and a real institutional Kubernetes Job template.
+- **Fixture-verified real-backend pattern** — every real tool wrapper (RFdiffusion, ProteinMPNN, AF2 initial-guess, RFantibody, RF2+AF3) has its exact CLI and output parsing unit-tested **without a GPU**.
+
+The science is the paper's; the agent, the architecture, and the infrastructure are mine.
+
 ## Quick start
 
 ```bash
-cd pmhc_agent_pkg
 python -m pmhc_agent.run                       # default MART-1 / A*02:01 demo
 python -m pmhc_agent.run --peptide EVDPIGHLY --allele "HLA-A*01:01" --antigen MAGE-A3
 pip install -e ".[dev]"                        # makes `pmhc_agent` importable
 python examples/multi_target.py                # memory reuse across targets
-pytest -q                                      # run the tests (7 pass)
+pytest -q                                      # run the tests (58 pass, 3 Ray tests skip without a cluster)
 ```
 
 No third-party dependencies are needed for the mock demo — it runs on the
