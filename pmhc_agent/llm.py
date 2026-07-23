@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 
 from .types import RoundReport
 from .diagnostics import ReplanAction, RuleBasedDiagnoser, clamp_action
@@ -37,7 +38,10 @@ from .diagnostics import ReplanAction, RuleBasedDiagnoser, clamp_action
 log = logging.getLogger("pmhc_agent.llm")
 
 # Configurable — set to whatever Anthropic model you have access to.
-DEFAULT_MODEL = os.environ.get("PMHC_LLM_MODEL", "claude-3-5-sonnet-latest")
+# Model ids change over time and differ per account. List yours with
+#   anthropic.Anthropic().models.list()
+# and override without editing code via  export PMHC_LLM_MODEL=...
+DEFAULT_MODEL = os.environ.get("PMHC_LLM_MODEL", "claude-sonnet-4-5")
 
 # The structured-output contract we force the model to fill in. Its fields
 # are exactly the fields of ReplanAction.
@@ -131,6 +135,19 @@ def _summarize(report: RoundReport, theta: float, stalled_rounds: int,
     return json.dumps(payload, indent=2)
 
 
+def _clean_field_text(value: object) -> str:
+    """Defensively strip tool-call/XML artifacts a model may leak into a
+    free-text field. Some models occasionally emit closing tags or the next
+    parameter as inline pseudo-XML *inside* a string value (e.g. a stray
+    ``</diagnosis>`` or ``<parameter name=...>``). We cut at the first such
+    artifact and drop any residual tags so the parsed text stays clean."""
+    text = str(value or "")
+    text = re.split(r"</?\s*(?:diagnosis|parameter|tool|invoke|function)\b",
+                    text, maxsplit=1)[0]
+    text = re.sub(r"<[^>]*>", "", text)           # remove any leftover tags
+    return text.strip()
+
+
 class LLMDiagnoser:
     """Diagnoser backed by an Anthropic model, with rule-based fallback."""
     name = "llm"
@@ -195,7 +212,7 @@ class LLMDiagnoser:
             if getattr(block, "type", None) == "tool_use":
                 data = block.input
                 return ReplanAction(
-                    diagnosis="[LLM] " + str(data.get("diagnosis", "")).strip(),
+                    diagnosis="[LLM] " + _clean_field_text(data.get("diagnosis", "")),
                     contact_bias=float(data.get("contact_bias", 0.0) or 0.0),
                     lower_theta_by=float(data.get("lower_theta_by", 0.0) or 0.0),
                     use_scaffold_seed=bool(data.get("use_scaffold_seed", False)),

@@ -114,3 +114,25 @@ def test_orchestrator_runs_with_llm_brain():
     assert camp.done
     assert len(camp.library) > 0
     assert agent.diagnoser.name == "llm"
+
+
+def test_leaked_xml_tags_are_sanitized_out_of_diagnosis():
+    # Some models occasionally leak tool-call/XML artifacts INTO a text field
+    # (observed with a real model: a stray closing tag + the next parameter
+    # rendered as inline pseudo-XML). The parser must strip that so the
+    # committed/printed diagnosis stays clean.
+    fake = FakeClient({
+        "diagnosis": ("Designs are close but not sharply discriminating; a "
+                      "small theta relaxation should recover near-misses."
+                      "</diagnosis>\n<parameter name=\"contact_bias\">0.06"),
+        "contact_bias": 0.06, "lower_theta_by": 0.05,
+        "use_scaffold_seed": True, "escalate": False,
+    })
+    d = LLMDiagnoser(client=fake, model="fake-model")
+    action = d.diagnose(_report(), theta=1.74, stalled_rounds=0, patience=2)
+    assert "<" not in action.diagnosis
+    assert "parameter" not in action.diagnosis
+    assert "diagnosis>" not in action.diagnosis
+    assert action.diagnosis.rstrip().endswith("recover near-misses.")
+    # the structured numeric field is still parsed and clamped normally
+    assert abs(action.contact_bias - 0.06) < 1e-9
