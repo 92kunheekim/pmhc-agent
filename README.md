@@ -233,6 +233,17 @@ Three properties worth noting:
 loop: the system prompt, the tool schema, the call, the parse, the clamp, and
 the fallback.
 
+**Seeing it actually run.** The tests exercise this path with an *injected fake client* (deterministic, no key, no network — so CI stays green), and a captured transcript of the brain driving a real campaign against an Anthropic model is checked in at [`docs/llm-brain-run.md`](docs/llm-brain-run.md) — the per-round `[LLM]` diagnoses are the model reasoning over each round's gate funnel. Reproduce it with your own key:
+
+```bash
+pip install -e ".[llm]"
+export ANTHROPIC_API_KEY=sk-ant-...
+# pick a model your account has: python -c "import anthropic; [print(m.id) for m in anthropic.Anthropic().models.list().data]"
+python -m pmhc_agent.run --brain llm --library 600 --model <model-id> | tee docs/llm-brain-run.md
+```
+
+The parser also defensively strips any tool-call/XML artifacts a model may leak into a free-text field, so the diagnosis stays clean regardless of model quirks (regression-tested in `tests/test_llm_diagnoser.py`).
+
 ## Engine + domains (generalization)
 
 The orchestration is being generalized into a domain-agnostic **engine** so the
